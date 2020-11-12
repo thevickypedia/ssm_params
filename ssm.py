@@ -27,7 +27,8 @@ def put_param():
     response_put = client.put_parameter(
         Name=name,
         Value=value,
-        Type=typ
+        Type=typ,
+        Overwrite=True
     )
     if response_put['ResponseMetadata']['HTTPStatusCode'] == 200:
         logger.info(f' Parameter {name} has been ADDED successfully. Below is the response.')

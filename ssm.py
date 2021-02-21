@@ -41,7 +41,7 @@ def get_param():
     name = input('Enter the name of the parameter you wish to retrieve (case sensitive):\n')
     try:
         response_get = client.get_parameter(Name=name, WithDecryption=True)
-    except:
+    except client.exceptions.ParameterNotFound:
         response_get = None
         logger.error(' Unable to find such a parameter or unable connect to SSM. Recheck your auth and parameter name.')
         exit(0)
@@ -57,7 +57,7 @@ def delete_param():
     name = input('Enter the name of the parameter you wish to DELETE (case sensitive):\n')
     try:
         response_delete = client.delete_parameter(Name=name)
-    except:
+    except client.exceptions.ParameterNotFound:
         response_delete = None
         logger.error(' Unable to find such a parameter or unable connect to SSM. Recheck your auth and parameter name.')
         exit(0)
@@ -74,4 +74,4 @@ if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(':')
     client = boto3.client('ssm')
-    pprint(delete_param())
+    pprint(get_param())

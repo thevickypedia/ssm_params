@@ -4,7 +4,23 @@ from pprint import pprint
 import boto3
 
 
+def put_param_json(name, value, typ):
+    """Put parameters on ssm using json object."""
+    response_put = client.put_parameter(
+        Name=name,
+        Value=value,
+        Type=typ,
+        Overwrite=True
+    )
+    if response_put['ResponseMetadata']['HTTPStatusCode'] == 200:
+        logger.info(f' Parameter {name} has been ADDED successfully. Below is the response.')
+    else:
+        logger.info(f' Parameter {name} was not ADDED successfully. Check the response below.')
+    return response_put
+
+
 def put_param():
+    """Put parameters on ssm manually."""
     name = input('Enter the name of the parameter you wish to add:\n')
     value = input(f'Enter the value for {name}:\n')
     try:
@@ -38,6 +54,7 @@ def put_param():
 
 
 def get_param():
+    """Get parameters from ssm manually."""
     name = input('Enter the name of the parameter you wish to retrieve (case sensitive):\n')
     try:
         response_get = client.get_parameter(Name=name, WithDecryption=True)
@@ -48,12 +65,13 @@ def get_param():
     param = response_get['Parameter']
     ret = {}
     name = param['Name']
-    val = param['Value']
-    ret[name] = val
+    value = param['Value']
+    ret[name] = value
     return ret
 
 
 def delete_param():
+    """Delete parameters on ssm manually."""
     name = input('Enter the name of the parameter you wish to DELETE (case sensitive):\n')
     try:
         response_delete = client.delete_parameter(Name=name)
@@ -70,8 +88,21 @@ def delete_param():
     return response_delete
 
 
+def get_json_obj():
+    """Gets the dictionary from the stored json file."""
+    import json
+    with open('params.json') as json_file:
+        if data := json.load(json_file):
+            return data
+
+
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
-    logger = logging.getLogger(':')
+    logger = logging.getLogger(__name__)
     client = boto3.client('ssm')
     pprint(get_param())
+
+    if content := get_json_obj():
+        for key, val in content.items():
+            put_param_json(name=f'/Jarvis/{key}', value=val, typ='SecureString')
+            # delete_param(name=f'/Jarvis/{key}')

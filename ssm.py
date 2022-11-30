@@ -1,108 +1,118 @@
+import json
 import logging
-from pprint import pprint
+import os
+import time
+from typing import NoReturn, Tuple, AnyStr, Iterable
 
 import boto3
+from boto3 import client
+
+logger = logging.getLogger(__name__)
+handler = logging.StreamHandler()
+handler.setFormatter(fmt=logging.Formatter(
+    fmt='%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - %(funcName)s - %(message)s',
+    datefmt='%b-%d-%Y %I:%M:%S %p'
+))
+logger.addHandler(hdlr=handler)
+logger.setLevel(level=logging.DEBUG)
+
+session = boto3.Session(aws_access_key_id=os.environ.get('AWS_ACCESS_KEY'),
+                        aws_secret_access_key=os.environ.get('AWS_SECRET_KEY'),
+                        region_name=os.environ.get('AWS_REGION_NAME', 'us-west-2'))
+ssm_client = session.client(service_name='ssm')
 
 
-def put_param_json(name, value, typ):
-    """Put parameters on ssm using json object."""
-    response_put = client.put_parameter(
-        Name=name,
-        Value=value,
-        Type=typ,
-        Overwrite=True
-    )
-    if response_put['ResponseMetadata']['HTTPStatusCode'] == 200:
-        logger.info(f' Parameter {name} has been ADDED successfully. Below is the response.')
-    else:
-        logger.info(f' Parameter {name} was not ADDED successfully. Check the response below.')
-    return response_put
+def get_resources(ssm_details: dict) -> Tuple[list, AnyStr]:
+    """Get SSM resources along with the token for next parameter."""
+    results = ssm_details['Parameters']
+    resources = [result for result in results]
+    next_token = ssm_details.get('NextToken', None)
+    return resources, next_token
 
 
-def put_param():
+def get_all_params(boto3_client: client = ssm_client, incl_value: bool = True) -> Iterable[dict]:
+    """Yields all the SSM parameters as a dictionary."""
+    next_token = ''
+    while next_token is not None:
+        ssm_details = boto3_client.describe_parameters(MaxResults=50, NextToken=next_token)
+        current_batch, next_token = get_resources(ssm_details)
+        for r in current_batch:
+            if incl_value:
+                yield_ = dict(Name=r.get('Name'), Type=r.get('Type'),
+                              Value=get_param_value(name=r.get('Name'), boto3_client=boto3_client),
+                              Description=r.get('Description', f"Parameter for the key {r.get('Name').split('/')[-1]}"))
+            else:
+                yield_ = dict(Name=r.get('Name'), Type=r.get('Type'),
+                              Description=r.get('Description', f"Parameter for the key {r.get('Name').split('/')[-1]}"))
+            yield yield_
+
+
+def dump_all_params(filename: str):
+    """Dump all the parameters in a JSON file."""
+    data = list(get_all_params())
+    logger.info("Total number of parameters found: %s" % len(data))
+    with open(filename, 'w') as file:
+        json.dump(data, file, indent=4)
+
+
+def put_param(name: str, value: str, param_type: str, description: str, boto3_client: client = ssm_client) -> NoReturn:
     """Put parameters on ssm manually."""
-    name = input('Enter the name of the parameter you wish to add:\n')
-    value = input(f'Enter the value for {name}:\n')
-    try:
-        typ = int(
-            input('Enter the type you wish to save the parameter as:\n1. String\n2. StringList\n3. SecureString\n'))
-    except ValueError:
-        typ = None
-        logger.error(' Enter either 1 or 2 or 3, its that simple.')
-        exit(1)
-    if typ == 1:
-        typ = 'String'
-    elif typ == 2:
-        typ = 'StringList'
-    elif typ == 3:
-        typ = 'SecureString'
-    else:
-        logger.error(' Enter either 1 or 2 or 3, its that simple.')
-        exit(0)
-
-    response_put = client.put_parameter(
+    response_put = boto3_client.put_parameter(
         Name=name,
         Value=value,
-        Type=typ,
+        Type=param_type,
+        Description=description,
         Overwrite=True
     )
     if response_put['ResponseMetadata']['HTTPStatusCode'] == 200:
-        logger.info(f' Parameter {name} has been ADDED successfully. Below is the response.')
+        logger.info(f'Parameter {name!r} has been ADDED successfully to {boto3_client.meta.region_name!r}')
     else:
-        logger.info(f' Parameter {name} was not ADDED successfully. Check the response below.')
-    return response_put
+        logger.error('Parameter %s was NOT ADDED.' % name)
+        logger.error(response_put)
 
 
-def get_param():
+def get_param_value(name: str, boto3_client: client = ssm_client):
     """Get parameters from ssm manually."""
-    name = input('Enter the name of the parameter you wish to retrieve (case sensitive):\n')
     try:
-        response_get = client.get_parameter(Name=name, WithDecryption=True)
-    except client.exceptions.ParameterNotFound:
-        response_get = None
-        logger.error(' Unable to find such a parameter or unable connect to SSM. Recheck your auth and parameter name.')
-        exit(0)
-    param = response_get['Parameter']
-    ret = {}
-    name = param['Name']
-    value = param['Value']
-    ret[name] = value
-    return ret
+        return boto3_client.get_parameter(Name=name, WithDecryption=True).get('Parameter', {}).get('Value')
+    except boto3_client.exceptions.ParameterNotFound as error:
+        logger.error(error)
 
 
-def delete_param():
+def delete_param(name: str, boto3_client: client = ssm_client):
     """Delete parameters on ssm manually."""
-    name = input('Enter the name of the parameter you wish to DELETE (case sensitive):\n')
     try:
-        response_delete = client.delete_parameter(Name=name)
-    except client.exceptions.ParameterNotFound:
-        response_delete = None
-        logger.error(' Unable to find such a parameter or unable connect to SSM. Recheck your auth and parameter name.')
-        exit(0)
+        response_delete = boto3_client.delete_parameter(Name=name)
+    except boto3_client.exceptions.ParameterNotFound as error:
+        logger.error(error)
+        return
 
     if response_delete['ResponseMetadata']['HTTPStatusCode'] == 200:
-        logger.info(f' Parameter {name} has been DELETED successfully. Below is the response.')
+        logger.info(f'Parameter {name!r} has been DELETED successfully from {boto3_client.meta.region_name!r}')
     else:
-        logger.info(f' Parameter {name} was not DELETED successfully. Check the response below.')
-
-    return response_delete
-
-
-def get_json_obj():
-    """Gets the dictionary from the stored json file."""
-    import json
-    with open('params.json') as json_file:
-        if data := json.load(json_file):
-            return data
+        logger.error('Parameter %s was NOT DELETED.' % name)
+        logger.error(response_delete)
 
 
-if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO)
-    logger = logging.getLogger(__name__)
-    client = boto3.client('ssm')
-    pprint(get_param())
+def delete_param_regex(looks_like: str, boto3_client: client = ssm_client) -> NoReturn:
+    """Delete parameters that match the name."""
+    for param in get_all_params(boto3_client=boto3_client, incl_value=False):
+        if looks_like in param.get('Name'):
+            logger.info(f"Deleting the parameter {param.get('Name')!r} from {boto3_client.meta.region_name!r}.")
+            time.sleep(1)
+            delete_param(name=param.get('Name'), boto3_client=boto3_client)
 
-    if content := get_json_obj():
-        for key, val in content.items():
-            put_param_json(name=f'/Jarvis/{key}', value=val, typ='SecureString')
-            # delete_param(name=f'/Jarvis/{key}')
+
+def swap_regions(from_, to_, delete_src: bool = True) -> NoReturn:
+    """Move/copy parameters from one region to another."""
+    available_regions = session.get_available_regions(service_name='ssm')
+    if from_ not in available_regions or to_ not in available_regions:
+        raise ValueError(f"Pick a region that is available.\nAvailable regions: {available_regions}")
+    client_from = session.client(service_name='ssm', region_name=from_)
+    client_to = session.client(service_name='ssm', region_name=to_)
+    for param in get_all_params(boto3_client=client_from):
+        logger.info(f"Got parameter {param.get('Name')!r} from {from_!r}")
+        put_param(name=param.get('Name'), param_type=param.get('Type'), value=param.get('Value'),
+                  description=param.get('Description'), boto3_client=client_to)
+        if delete_src:
+            delete_param(name=param.get('Name'), boto3_client=client_from)

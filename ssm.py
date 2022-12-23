@@ -6,6 +6,7 @@ from typing import NoReturn, Tuple, AnyStr, Iterable
 
 import boto3
 from boto3 import client
+from botocore.exceptions import ClientError
 
 logger = logging.getLogger(__name__)
 handler = logging.StreamHandler()
@@ -34,8 +35,15 @@ def get_all_params(boto3_client: client = ssm_client, incl_value: bool = True) -
     """Yields all the SSM parameters as a dictionary."""
     next_token = ''
     while next_token is not None:
-        ssm_details = boto3_client.describe_parameters(MaxResults=50, NextToken=next_token)
-        current_batch, next_token = get_resources(ssm_details)
+        try:
+            ssm_details = boto3_client.describe_parameters(MaxResults=50, NextToken=next_token)
+            current_batch, next_token = get_resources(ssm_details)
+        except ClientError as error:
+            if error.response.get('Error', {}).get('Code') == 'ValidationException' and \
+                    "Value '' at 'nextToken'" in (error.response.get('Error', {}).get('Message')):
+                current_batch = boto3_client.describe_parameters().get('Parameters')
+            else:
+                raise
         for r in current_batch:
             if incl_value:
                 yield_ = dict(Name=r.get('Name'), Type=r.get('Type'),
